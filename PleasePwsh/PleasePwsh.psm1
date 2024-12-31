@@ -8,72 +8,53 @@ Set-PSDebug -Strict
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-function Get-OpenAIApiKey {
-    if ($env:PLEASE_OPENAI_API_KEY) {
-        return $env:PLEASE_OPENAI_API_KEY
+function Get-MistralApiKey {
+    if ($env:PLEASE_MISTRAL_API_KEY) {
+        return $env:PLEASE_MISTRAL_API_KEY
     }
-    if ($env:OPENAI_API_KEY) {
-        return $env:OPENAI_API_KEY
+    if ($env:MISTRAL_API_KEY) {
+        return $env:MISTRAL_API_KEY
     }
     return $null
 }
 
-function Get-OpenAIModel {
-    if ($env:PLEASE_OPENAI_CHAT_MODEL) {
-        return $env:PLEASE_OPENAI_CHAT_MODEL
-    }
-    # There is no openai compatible environment variable to set a default model
-    return "gpt-3.5-turbo"
+function Get-MistralModel {
+    return "mistral-large-latest"
 }
 
-function Get-OpenAIBaseUrl {
-    if ($env:PLEASE_OPENAI_API_BASE) {
-        return $env:PLEASE_OPENAI_API_BASE
+function Get-MistralBaseUrl {
+    if ($env:PLEASE_MISTRAL_API_BASE) {
+        return $env:PLEASE_MISTRAL_API_BASE
     }
-    if ($env:OPENAI_API_BASE) {
-        return $env:OPENAI_API_BASE
+    if ($env:MISTRAL_API_BASE) {
+        return $env:MISTRAL_API_BASE
     }
-    return "https://api.openai.com"
+    return "https://api.mistral.ai"
 }
 
-function Get-OpenAIApiVersion {
-    if ($env:PLEASE_OPENAI_API_VERSION) {
-        return $env:PLEASE_OPENAI_API_VERSION
+function Invoke-MistralRequest($Payload) {
+    $Uri = "$(Get-MistralBaseUrl)/v1/chat/completions"
+
+    $Headers = @{
+        'Content-Type'  = 'application/json'
+        'Authorization' = "Bearer $(Get-MistralApiKey)"
     }
-    if ($env:OPENAI_API_VERSION) {
-        return $env:OPENAI_API_VERSION
+
+    try {
+        $Response = Invoke-RestMethod -Uri $Uri -Method Post -Headers $Headers -Body ($Payload | ConvertTo-Json)
     }
-    return "v1"
+    catch {
+        Write-Error "Received $($_.Exception.Response.ReasonPhrase): $($_.Exception.Response.Content | ConvertTo-Json)"
+    }
+
+    Return $Response.choices[0].message.content
 }
 
-function Get-OpenAIBaseUrlWithVersion {
-    return "$(Get-OpenAIBaseUrl)/$(Get-OpenAIApiVersion)"
-}
-
-<#
-.SYNOPSIS
-Translates a prompt into a PowerShell command using OpenAI GPT.
-
-.DESCRIPTION
-The main function, 'Please', takes a PowerShell command as input and prompts the user with a list of actions to perform on that command: abort, copy, explain and invoke.
-
-.PARAMETER Prompt
-Specifies the prompt in natural language that gets translated into a PowerShell command.
-
-.PARAMETER Explain
-If this switch is provided, the script will return a brief explanation of the specified command.
-
-.EXAMPLE
-PS> Please "Get all files in current directory that are larger than 1 MB"
-
-PS> Please -Explain "Get-ChildItem -Path 'C:\'"
-#>
 function Please {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$Prompt,
         [Alias("e")][switch]$Explain
-
     )
 
     Test-ApiKey
@@ -95,14 +76,14 @@ function Please {
 }
 
 function Test-ApiKey {
-    if ($null -eq $(Get-OpenAIApiKey)) {
-        Write-Output "`u{1F50E} Api key missing. See https://help.openai.com/en/articles/4936850-where-do-i-find-my-secret-api-key"
+    if ($null -eq $(Get-MistralApiKey)) {
+        Write-Output "`u{1F50E} Api key missing. See https://help.mistral.ai/en/articles/4936850-where-do-i-find-my-secret-api-key"
         $Key = Read-Host "Please provide the api key"
 
         if ([string]::IsNullOrWhiteSpace($Key)) {
             throw "`u{1F937} Api key still missing. Aborting."
         }
-        $env:OPENAI_API_KEY = $Key
+        $env:MISTRAL_API_KEY = $Key
     }
 }
 
@@ -110,14 +91,14 @@ function Get-PwshCommand([string]$Prompt) {
     $Role = "You translate the input given into PowerShell command. You may not use natural language, but only a PowerShell commands as answer. Do not use markdown. Do not quote the whole output. If you do not know the answer, answer only with 'I do not know'"
 
     $Payload = @{
-        'model'    = Get-OpenAIModel
+        'model'    = Get-MistralModel
         'messages' = @(
             @{ 'role' = 'system'; 'content' = $Role },
             @{ 'role' = 'user'; 'content' = $Prompt }
         )
     }
 
-    Return Invoke-OpenAIRequest $Payload
+    Return Invoke-MistralRequest $Payload
 }
 
 function Show-Menu($Command) {
@@ -157,31 +138,13 @@ function Get-CommandExplanation([string]$Command) {
 
     $Payload = @{
         'max_tokens' = 100
-        'model'      = Get-OpenAIModel
+        'model'      = Get-MistralModel
         'messages'   = @(
             @{ 'role' = 'user'; 'content' = $Prompt }
         )
     }
 
-    Return Invoke-OpenAIRequest $Payload
-}
-
-function Invoke-OpenAIRequest($Payload) {
-    $Uri = "$(Get-OpenAIBaseUrlWithVersion)/chat/completions"
-
-    $Headers = @{
-        'Content-Type'  = 'application/json'
-        'Authorization' = "Bearer $(Get-OpenAIApiKey)"
-    }
-
-    try {
-        $Response = Invoke-RestMethod -Uri $Uri -Method Post -Headers $Headers -Body ($Payload | ConvertTo-Json)
-    }
-    catch {
-        Write-Error "Received $($_.Exception.Response.ReasonPhrase): $($_.Exception.Response.Content | ConvertTo-Json)"
-    }
-
-    Return $Response.choices[0].message.content
+    Return Invoke-MistralRequest $Payload
 }
 
 Export-ModuleMember -Function "Please"
